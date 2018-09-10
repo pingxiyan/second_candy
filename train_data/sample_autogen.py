@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #encoding: utf-8
-import os
+import os, sys
 import glob
 import pygame
 import cv2
@@ -56,6 +56,8 @@ def generate_next_train_sample(bglist, words, font):
     my = random.choice(range(0, bg_img.shape[0] - F - 1 - 1 - mL))
     
     # where text is put
+    if mL == 0:
+        mL = mL + 1
     y = my + random.choice(range(0, mL))
     
     # add banner
@@ -89,10 +91,16 @@ def generate_next_train_sample(bglist, words, font):
     print("loc=",loc)
     return bg_img, loc
 
-
+def show_usage():
+    print("\nPlease use the following command:")
+    print("python sample_autogen.py <VOCdevkit dir>")
+    sys.exit(1)
 
    
 if __name__ == "__main__":
+
+    if (len(sys.argv) < 2):
+        show_usage()
 
     head_rng = range(int(0xb0), int(0xf7) + 1)
     body_rng = range(int(0xa1), int(0xfe) + 1)
@@ -110,7 +118,7 @@ if __name__ == "__main__":
 
     font = pygame.font.Font("KaiTi.ttf", 256)
 
-    bglist = glob.glob("/home/hddl/dockerv0/data/voc/VOCdevkit/VOC0712/JPEGImages/*.jpg")
+    bglist = glob.glob(sys.argv[1])
 
     cap = cv2.VideoCapture(0)
     cc = calib.CamCalibrator()
