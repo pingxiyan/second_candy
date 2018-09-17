@@ -79,6 +79,8 @@ class VOC_Label_Window(object):
         for bb in self.boxes:
             color = self._bbcolor(bb, False)
             cv2.rectangle(fg, self.ptmap(bb.tl), self.ptmap(bb.br), color, thickness=2)
+            cv2.line(fg,self.ptmap(bb.corner(1)), self.ptmap(bb.corner(3)), color, thickness=2)
+            cv2.line(fg,self.ptmap(bb.corner(2)), self.ptmap(bb.corner(4)), color, thickness=2)
             cv2.putText(fg, bb.name, self.ptmap(bb.tl), cv2.FONT_HERSHEY_COMPLEX, 1, color,2)
 
         if self.curbox:
@@ -241,8 +243,8 @@ Tips:
 
 print(helpstr)
 
-img_file_list = glob.glob("/home/hddl/dockerv0/data/voc/VOCdevkit/VOC2007/JPEGImages/*.jpg")
-xml_file_path = "./cnn"
+img_file_list = glob.glob("C:/LTQ/data/new_500/1*.jpg")
+xml_file_path = "C:/LTQ/data/Annotations"
 
 wnd = VOC_Label_Window("Label", img_file_list, xml_file_path, img_scale=2.5)
 wnd.mainloop()
