@@ -31,14 +31,18 @@ class VOC_Label_Window(object):
    
     def imload(self, img_id):
     
+        N = len(self.img_file_list)
+        while(img_id < 0): img_id += N
+        while(img_id >= N): img_id -=N
+        
         do_reload = img_id == self.img_id
             
         # before switching, save & load 
         if self.img_id >= 0 and (not do_reload):
             objs = [sctool.build_voc_object(b.name, b.x0, b.y0, b.x1, b.y1) for b in self.boxes]
             sctool.save_voc_annotation(self.img_file_list[self.img_id], objs, xmlpath=self.xml_file_path)
-        
-        self.img_id = min(max(img_id, 0), len(self.img_file_list))
+
+        self.img_id = img_id
         self.bg0 = cv2.imread(self.img_file_list[self.img_id])
         self.img_scale_last = 0
         
