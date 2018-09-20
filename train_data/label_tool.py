@@ -23,6 +23,9 @@ class VOC_Label_Window(object):
         self.xml_file_path = xml_file_path
         self.editor = None
         self.lastname = "noname"
+        self.rotate_angle = 0
+        self.rotate_angle_last = 0
+        self.rotateMapper = None
         cv2.namedWindow(self.name)
         cv2.setMouseCallback(self.name, VOC_Label_Window._mouseCallback, self)
         self.imload(0)
@@ -40,13 +43,14 @@ class VOC_Label_Window(object):
         # before switching, save & load 
         if self.img_id >= 0 and (not do_reload):
             objs = [sctool.build_voc_object(b.name, b.x0, b.y0, b.x1, b.y1) for b in self.boxes]
-            sctool.save_voc_annotation(self.img_file_list[self.img_id], objs, xmlpath=self.xml_file_path)
+            sctool.save_voc_annotation(self.img_file_list[self.img_id], objs, rotation_degree=self.rotate_angle, xmlpath=self.xml_file_path)
 
         self.img_id = img_id
         self.bg0 = cv2.imread(self.img_file_list[self.img_id])
         self.img_scale_last = 0
+        self.rotate_angle_last = 99999
         
-        objs = sctool.load_voc_annotation(self.img_file_list[self.img_id], xmlpath=self.xml_file_path)
+        objs, self.rotate_angle = sctool.load_voc_annotation(self.img_file_list[self.img_id], xmlpath=self.xml_file_path)
         self.boxes = [sctool.bbox.fromvoc(o) for o in objs]
         self.curbox = None
         self.imupdate()
@@ -60,9 +64,9 @@ class VOC_Label_Window(object):
     def _bbcolor(self, bb, reverse=False):
         class_id = hash(bb.name) & 7
         color = [0,0,0]
-        if class_id & 1: color[0] = 255
-        if class_id & 2: color[1] = 255
-        if class_id & 4: color[2] = 255
+        if class_id & 1: color[0] = 225
+        if class_id & 2: color[1] = 225
+        if class_id & 4: color[2] = 225
         if reverse:
             color[0] = max(128,255 - color[0])
             color[1] = max(128,255 - color[1])
@@ -70,8 +74,17 @@ class VOC_Label_Window(object):
         return color
         
     def imupdate(self):
+        
+        self.rotate_angle = min(90, max(self.rotate_angle, -90))
+        
+        if self.rotate_angle != self.rotate_angle_last:
+            # first rotate if we need to
+            self.bg1, self.rotateMapper = sctool.rotateImage(self.bg0, self.rotate_angle)
+            self.rotate_angle_last = self.rotate_angle
+            self.img_scale_last = 0 # force rescale too
+            
         if self.img_scale != self.img_scale_last:
-            self.bg = cv2.resize(self.bg0, (0,0), fx=self.img_scale, fy=self.img_scale)
+            self.bg = cv2.resize(self.bg1, (0,0), fx=self.img_scale, fy=self.img_scale)
             self.img_scale_last = self.img_scale
 
         fg = np.copy(self.bg)
@@ -99,8 +112,14 @@ class VOC_Label_Window(object):
                 fg[y0-40:y0+10, x0:x1, :] = np.array([0,0,0])
                 cv2.putText(fg, "["+self.editor+"]", self.ptmap(self.curbox.tl), cv2.FONT_HERSHEY_COMPLEX, 1, (0,0,255),2)
         
-        title = "{}/{} {}".format(self.img_id, len(self.img_file_list), os.path.basename(self.img_file_list[self.img_id]))
+        title = "{}/{} {}  rotate:{}".format(self.img_id, 
+                                            len(self.img_file_list), 
+                                            os.path.basename(self.img_file_list[self.img_id]), 
+                                            self.rotate_angle)
         
+        origXY = self.ptmap(self.rotateMapper((0,0)))
+        cv2.line(fg, (origXY[0]-10,origXY[1]),(origXY[0] + 10,origXY[1]), (0,0,255), 8)
+        cv2.line(fg, (origXY[0],origXY[1]-10),(origXY[0],origXY[1] + 10), (0,0,255), 8)
         
         cv2.putText(fg, title, (0, 20), cv2.FONT_HERSHEY_COMPLEX, 1, (255,255,100),2)
         cv2.imshow(self.name, fg)
@@ -210,6 +229,11 @@ class VOC_Label_Window(object):
         if key == ord('-') or key == ord('_'):
             self.img_scale /= 1.1
             self.imupdate()
+            
+        if key == ord('['): self.rotate_angle -= 1;self.imupdate()
+        if key == ord(']'): self.rotate_angle += 1;self.imupdate()
+        if key == ord('{'): self.rotate_angle -= 1 ;self.imupdate()
+        if key == ord('}'): self.rotate_angle += 1 ;self.imupdate()
         
         if key == ord('r'):
             self.imload(self.img_id) # reload
@@ -247,8 +271,8 @@ Tips:
 
 print(helpstr)
 
-img_file_list = glob.glob("C:/LTQ/data/new_500/1*.jpg")
-xml_file_path = "C:/LTQ/data/Annotations"
+img_file_list = glob.glob("/home/hddl/dockerv0/second_candy/train_data/JPEGImages2/*.jpeg")
+xml_file_path = "./Annotations2"
 
 wnd = VOC_Label_Window("Label", img_file_list, xml_file_path, img_scale=2.5)
 wnd.mainloop()
