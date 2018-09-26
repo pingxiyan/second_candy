@@ -176,6 +176,12 @@ if 0:
     print(r.shape, img.shape)
     #print("r == img ? {}".format((r == img).all()))
     
+    pts0 = np.array([[102,300]]).T
+    pts1 = mapper(pts0) 
+    pts2 = mapper(pts1, False) 
+    print(pts0)
+    print(pts1)
+    print(pts2)
     pts = mapper(np.array([[0,0],[w,0],[w,h],[0,h]]).T).T.reshape((-1,1,2))
     print(pts)
     cv2.polylines(r, [pts] , True, (0,255,255),3)
@@ -241,7 +247,7 @@ def load_voc_annotation(image_filename, xmlpath="Annotations"):
     try:
         root = ET.parse(xmlfilename).getroot()
     except IOError:
-        print("XML file {} doesn't exists!".format(xmlfilename))
+        #print("XML file {} doesn't exists!".format(xmlfilename))
         return objs, rotation_degree
     
     rot = root.findall('rotation_degree')

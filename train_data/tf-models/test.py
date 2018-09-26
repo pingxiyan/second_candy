@@ -3,8 +3,13 @@ import cv2
 import glob
 import tensorflow as tf
 import math
+import os
 from PIL import Image
 from matplotlib import pyplot as plt
+import copy
+import sys
+sys.path.append('../')
+import sctool
 
 '''
 
@@ -12,11 +17,11 @@ CREATE TF RECORD:
 python dataset_tools/create_tower_tf_record.py --data_dir=/dockerv0/data/voc/VOCdevkit/VOC2019/ --output_path=./data-tower/tower.record --label_map_path=./data/tower_label_map.pbtxt
 
 TRAIN:
-python model_main.py --pipeline_config_path=ssd_mobilenet_v1_tower/pipeline_300x300.config --model_dir=ssd_mobilenet_v1_tower/ --num_train_steps=50000 --num_eval_steps=2000 --alsologtostderr
+python model_main.py --pipeline_config_path=ssd_mobilenet_v1_tower/pipeline_300x300.config --model_dir=ssd_mobilenet_v1_tower/   --num_train_steps=50000  --num_eval_steps=2000 --alsologtostderr
+python model_main.py --pipeline_config_path=ssd_mobilenet_v1_tower/pipeline_300x300.config --model_dir=ssd_mobilenet_v1_tower/r3 --num_train_steps=500000 --num_eval_steps=2000 --alsologtostderr
 
 EXPORT:
-python ./export_inference_graph.py --input_type=image_tensor --pipeline_config_path=ssd_mobilenet_v1_tower/pipeline.config --trained_checkpoint_prefix ssd_mobilenet_v1_tower/model.ckpt-42571 --output_directory=./ssd_mobilenet_v1_tower/export
-
+python ./export_inference_graph.py --input_type=image_tensor --pipeline_config_path=ssd_mobilenet_v1_tower/r3/pipeline_300x300.config --trained_checkpoint_prefix ssd_mobilenet_v1_tower/r3/model.ckpt-140079 --output_directory=./ssd_mobilenet_v1_tower/r3/export
 
 '''
 
@@ -74,12 +79,17 @@ def run_inference_for_single_image(image, sess):
     #train_writer.add_graph(sess.graph)
     return output_dict
 
-test_sources = '/dockerv0/data/voc/VOCdevkit/VOC2019/JPEGImages/*.jpg'
-#test_sources = '/dockerv0/data/card/JPEGImages/*.jpg'
-#test_sources = ''
-PATH_TO_FROZEN_GRAPH = './ssd_mobilenet_v1_tower/export/frozen_inference_graph.pb'
-#PATH_TO_FROZEN_GRAPH = '/dockerv0/tf-models/research/object_detection/ssd_mobilenet_v1_hanzi/128x128/export/frozen_inference_graph.pb'
-#PATH_TO_LABELS='/dockerv0/tf-models/research/object_detection/data/hanzi_label_map.pbtxt'
+rootpath = '/home/hddl'
+test_sources = rootpath+'/dockerv0/data/voc/VOCdevkit/VOC2019/JPEGImages/*.jpg'
+test_sources = rootpath+'/dockerv0/data/voc/VOCdevkit/tower/JPEGImages/*.jpg'
+
+test_sources = []
+for xmlname in glob.glob(rootpath+'/dockerv0/data/voc/VOCdevkit/tower/Annotations/*.xml'):
+    basename = os.path.splitext(os.path.basename(xmlname))[0]
+    test_sources.append((rootpath+"/dockerv0/data/voc/VOCdevkit/tower/JPEGImages/{}.jpg").format(basename))
+
+PATH_TO_FROZEN_GRAPH = rootpath+'/dockerv0/tf-models/research/object_detection/ssd_mobilenet_v1_tower/r5/export/frozen_inference_graph.pb'
+LABEL_NAMES = ['bg', 'c', 'cR', 'cL']
 
 # Load fronzen graph
 detection_graph = tf.Graph()
@@ -90,103 +100,135 @@ with detection_graph.as_default():
         od_graph_def.ParseFromString(serialized_graph)
         tf.import_graph_def(od_graph_def, name='')
 
-def rotateImage(image, angle):
+def infer(image):
+    # tensorflow use RGB order while OpenCV has BGR order
+    image_np = image[:,:,[2,1,0]]
 
-    height, width = image.shape[:2]
-    image_center = (width / 2, height / 2)
+    # Expand dimensions since the model expects images to have shape: [1, None, None, 3]
+    image_np_expanded = np.expand_dims(image_np, axis=0)
 
-    rotation_mat = cv2.getRotationMatrix2D(image_center, angle, 1.0)
+    # Actual detection.
+    output_dict = run_inference_for_single_image(image_np, sess)
+    return output_dict
 
-    abs_cos = abs(rotation_mat[0, 0])
-    abs_sin = abs(rotation_mat[0, 1])
+def draw_output(image, output_dict, classfilter = None, mapper = None):
+    for i in range(output_dict['detection_boxes'].shape[0]):
+        y0, x0, y1, x1 = output_dict['detection_boxes'][i]
+        conf = float(output_dict['detection_scores'][i])
+        if conf < 0.01: continue
+        aspect_ratio = float(x1 - x0) / float(y1 - y0)
 
-    bound_w = int(height * abs_sin + width * abs_cos)
-    bound_h = int(height * abs_cos + width * abs_sin)
+        cls = int(output_dict['detection_classes'][i])
 
-    rotation_mat[0, 2] += bound_w / 2 - image_center[0]
-    rotation_mat[1, 2] += bound_h / 2 - image_center[1]
+        if classfilter and (LABEL_NAMES[cls] not in classfilter): continue
 
-    result = cv2.warpAffine(image, rotation_mat, (bound_w, bound_h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(110,0,30))
-    return result
+        tag = "{} {:.2%}".format(LABEL_NAMES[cls], float(conf))
+
+        # use mapper to get polygon
+        pts0 = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]).T
+        ptsB = mapper(pts0)
+        pts = ptsB.T.reshape((-1, 1, 2))
+        cv2.polylines(image, [pts], True, (90, 255, 90), 3)
+        cv2.putText(image, tag, (int(pts[0,0,0]), int(pts[0,0,1])),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 100, 100), 2)
+    return
 
 def process_one_image(image_np_raw):
 
-    def infer(image):
-        image_np = image[:,:,[2,1,0]]
-
-        # Expand dimensions since the model expects images to have shape: [1, None, None, 3]
-        image_np_expanded = np.expand_dims(image_np, axis=0)
-
-        # Actual detection.
-        output_dict = run_inference_for_single_image(image_np, sess)
-        return output_dict
-
-    def draw_output(image, output_dict):
-        for i in range(output_dict['detection_boxes'].shape[0]):
-            y0, x0, y1, x1 = output_dict['detection_boxes'][i]
-            conf = float(output_dict['detection_scores'][i])
-            if conf < 0.1: continue
-
-            cls = int(output_dict['detection_classes'][i])
-            y0 *= image.shape[0]
-            x0 *= image.shape[1]
-            y1 *= image.shape[0]
-            x1 *= image.shape[1]
-
-            cv2.rectangle(image, (int(x0), int(y0)), (int(x1), int(y1)), (0, 255, 0), 3);
-
-            names = ['c', 'r', 'l']
-            cv2.putText(image, "{}:{:.2%}".format(names[cls], float(conf)),
-                        (int(x0), int(y0)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        return
-
     output_dict = infer(image_np_raw)
+
+    image_np_orig = np.copy(image_np_raw)
+
+    def mapper_no_rotate(xy):
+        # input is 2XN
+        for i in range(xy.shape[1]):
+            xy[1, i] *= image_np_orig.shape[0]  # y
+            xy[0, i] *= image_np_orig.shape[1]  # x
+        return xy.astype(np.int32)
+
+    draw_output(image_np_orig, output_dict, mapper = mapper_no_rotate)
+
     rotates = []
     rotates_confs = []
-    image_np_orig = np.copy(image_np_raw)
-    draw_output(image_np_orig, output_dict)
-
     # the result boxes is scaled isotropically (scaleX == scaleY == 300/640)
     for i in range(output_dict['detection_boxes'].shape[0]):
         y0,x0,y1,x1 = output_dict['detection_boxes'][i]
         conf = float(output_dict['detection_scores'][i])
-        if conf < 0.1: continue
+        if conf < 0.01: continue
 
         cls = int(output_dict['detection_classes'][i])
-        y0 *= image_np.shape[0]
-        x0 *= image_np.shape[1]
-        y1 *= image_np.shape[0]
-        x1 *= image_np.shape[1]
-        
-        rot = math.atan2(x1-x0, y1-y0)
-        if cls == 2:
-            # bottom to right
-            rot = -rot
+        x0 *= image_np_orig.shape[1]
+        x1 *= image_np_orig.shape[1]
+        y0 *= image_np_orig.shape[0]
+        y1 *= image_np_orig.shape[0]
+
+        aspect_ratio = float(x1-x0)/float(y1-y0)
+        rot = math.atan2(x1-x0, y1-y0) * 180 / math.pi
+
+        # bottom to right
+        if cls == 2: rot = -rot
+        rot_raw = rot
+
+        if cls == 1: rot = 0
+
+        # detect horizontal view angle
+        if aspect_ratio > 5:
+            if rot > 0:
+                rot = 90
+            else:
+                rot = -90
+
+        # detect vertical view angle
+        if aspect_ratio < 0.25:
+            rot = 0
+
+        print("cls={} conf={} rot_raw={} rot={} aspect_ratio={}".format(cls, conf, rot_raw, rot, aspect_ratio))
+
         rotates.append(rot)
         rotates_confs.append(conf)
 
     cv2.imshow("image_np_orig", image_np_orig)
-    cv2.imshow("image_np_rotated",image_np_orig)
+
+    image_np_final = image_np_orig
 
     # rotation degree
     if len(rotates_confs) > 0:
-        print(rotates_confs)
-        r = sum([r*c for r,c in zip(rotates, rotates_confs)]) / sum(rotates_confs)
-        r = r * 180 / math.pi
-        print(r)
 
-        if abs(r) > 20:
-            image_np_rotated = rotateImage(image_np_raw, r)
+        # find the most possible rotation angle
+        imax = 0
+        for irc, rconf in enumerate(rotates_confs):
+            if rconf > rotates_confs[imax]:
+                imax = irc
+
+        r = rotates[imax]
+
+        # if we need rotate, do it and infer again
+        if r != 0:
+            print("rotate {:.2f} degree".format(r))
+
+            image_np_rotated, mapper = sctool.rotateImage(image_np_raw, r)
+
             output_dict_rotated = infer(image_np_rotated)
-            draw_output(image_np_rotated, output_dict_rotated)
+            def mapper_rotate_back(xy):
+                for i in range(xy.shape[1]):
+                    xy[0, i] *= image_np_rotated.shape[1]
+                    xy[1, i] *= image_np_rotated.shape[0]
+                return mapper(xy, src2dst = False)
+
             cv2.imshow("image_np_rotated", image_np_rotated)
-    #
+
+            # replace the final result
+            image_np_final = np.copy(image_np_raw)
+            draw_output(image_np_final, output_dict_rotated, classfilter=["c"], mapper = mapper_rotate_back)
+
+    cv2.imshow("image_np_final", image_np_final)
 
     key = cv2.waitKey(0)
     if((key & 0xFF)== ord('q') and (key>0)):
         return False
     return True
+
+
 
 with detection_graph.as_default():
     with tf.Session() as sess:
@@ -198,7 +240,8 @@ with detection_graph.as_default():
                 assert(ret)
                 if not process_one_image(image_np): break
         else:
-            for image_path in glob.glob(test_sources):
+            for image_path in test_sources:
+                print("===== {} =====".format(image_path))
                 image_np = cv2.imread(image_path)
                 if not process_one_image(image_np): break
             

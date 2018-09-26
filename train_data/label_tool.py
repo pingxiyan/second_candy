@@ -271,8 +271,11 @@ Tips:
 
 print(helpstr)
 
-img_file_list = glob.glob("/home/hddl/dockerv0/second_candy/train_data/JPEGImages2/*.jpeg")
-xml_file_path = "./Annotations2"
+#img_file_list = glob.glob("/media/hddl/LTQ_T3/DL_dataset/tower/new_220/4*.jpg")
+#xml_file_path = "/media/hddl/LTQ_T3/DL_dataset/tower/Annotations"
+
+img_file_list = glob.glob("/home/hddl/dockerv0/data/voc/VOCdevkit/VOC2019/JPEGImages/*.jpg")
+xml_file_path = "/home/hddl/dockerv0/data/voc/VOCdevkit/VOC2019/Annotations"
 
 wnd = VOC_Label_Window("Label", img_file_list, xml_file_path, img_scale=2.5)
 wnd.mainloop()
