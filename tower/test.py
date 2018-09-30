@@ -8,8 +8,8 @@ from PIL import Image
 from matplotlib import pyplot as plt
 import copy
 import sys
-sys.path.append('../')
-import sctool
+sys.path.append('../train_data')
+import sctools
 
 '''
 
@@ -88,7 +88,7 @@ for xmlname in glob.glob(rootpath+'/dockerv0/data/voc/VOCdevkit/tower/Annotation
     basename = os.path.splitext(os.path.basename(xmlname))[0]
     test_sources.append((rootpath+"/dockerv0/data/voc/VOCdevkit/tower/JPEGImages/{}.jpg").format(basename))
 
-PATH_TO_FROZEN_GRAPH = rootpath+'/dockerv0/tf-models/research/object_detection/ssd_mobilenet_v1_tower/r5/export/frozen_inference_graph.pb'
+PATH_TO_FROZEN_GRAPH = rootpath+'/dockerv0/second_candy/tf-models/research/object_detection/ssd_mobilenet_v1_tower/r8/export/frozen_inference_graph.pb'
 LABEL_NAMES = ['bg', 'c', 'cR', 'cL']
 
 # Load fronzen graph
@@ -133,99 +133,107 @@ def draw_output(image, output_dict, classfilter = None, mapper = None):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 100, 100), 2)
     return
 
-def process_one_image(image_np_raw):
+def process_one_image(image_np_raw_input):
 
-    output_dict = infer(image_np_raw)
+    preRotate = 0
+    while(1):
+        if preRotate:
+            image_np_raw, _ = sctools.transform.rotateImage(image_np_raw_input, preRotate)
+        else:
+            image_np_raw = image_np_raw_input
 
-    image_np_orig = np.copy(image_np_raw)
+        output_dict = infer(image_np_raw)
 
-    def mapper_no_rotate(xy):
-        # input is 2XN
-        for i in range(xy.shape[1]):
-            xy[1, i] *= image_np_orig.shape[0]  # y
-            xy[0, i] *= image_np_orig.shape[1]  # x
-        return xy.astype(np.int32)
+        image_np_orig = np.copy(image_np_raw)
 
-    draw_output(image_np_orig, output_dict, mapper = mapper_no_rotate)
+        def mapper_no_rotate(xy):
+            # input is 2XN
+            for i in range(xy.shape[1]):
+                xy[1, i] *= image_np_orig.shape[0]  # y
+                xy[0, i] *= image_np_orig.shape[1]  # x
+            return xy.astype(np.int32)
 
-    rotates = []
-    rotates_confs = []
-    # the result boxes is scaled isotropically (scaleX == scaleY == 300/640)
-    for i in range(output_dict['detection_boxes'].shape[0]):
-        y0,x0,y1,x1 = output_dict['detection_boxes'][i]
-        conf = float(output_dict['detection_scores'][i])
-        if conf < 0.01: continue
+        draw_output(image_np_orig, output_dict, mapper = mapper_no_rotate)
 
-        cls = int(output_dict['detection_classes'][i])
-        x0 *= image_np_orig.shape[1]
-        x1 *= image_np_orig.shape[1]
-        y0 *= image_np_orig.shape[0]
-        y1 *= image_np_orig.shape[0]
+        rotates = []
+        rotates_confs = []
+        # the result boxes is scaled isotropically (scaleX == scaleY == 300/640)
+        for i in range(output_dict['detection_boxes'].shape[0]):
+            y0,x0,y1,x1 = output_dict['detection_boxes'][i]
+            conf = float(output_dict['detection_scores'][i])
+            if conf < 0.01: continue
 
-        aspect_ratio = float(x1-x0)/float(y1-y0)
-        rot = math.atan2(x1-x0, y1-y0) * 180 / math.pi
+            cls = int(output_dict['detection_classes'][i])
+            x0 *= image_np_orig.shape[1]
+            x1 *= image_np_orig.shape[1]
+            y0 *= image_np_orig.shape[0]
+            y1 *= image_np_orig.shape[0]
 
-        # bottom to right
-        if cls == 2: rot = -rot
-        rot_raw = rot
+            aspect_ratio = float(x1-x0)/float(y1-y0)
+            rot = math.atan2(x1-x0, y1-y0) * 180 / math.pi
 
-        if cls == 1: rot = 0
+            # bottom to right
+            if cls == 2: rot = -rot
+            rot_raw = rot
 
-        # detect horizontal view angle
-        if aspect_ratio > 5:
-            if rot > 0:
-                rot = 90
-            else:
-                rot = -90
+            if cls == 1: rot = 0
 
-        # detect vertical view angle
-        if aspect_ratio < 0.25:
-            rot = 0
+            # detect vertical view angle
+            #if aspect_ratio < 0.25:
+            #    rot = 0
 
-        print("cls={} conf={} rot_raw={} rot={} aspect_ratio={}".format(cls, conf, rot_raw, rot, aspect_ratio))
+            print("cls={} conf={} rot_raw={} rot={} aspect_ratio={}".format(cls, conf, rot_raw, rot, aspect_ratio))
 
-        rotates.append(rot)
-        rotates_confs.append(conf)
+            rotates.append(rot)
+            rotates_confs.append(conf)
 
-    cv2.imshow("image_np_orig", image_np_orig)
+        cv2.imshow("image_np_orig", image_np_orig)
 
-    image_np_final = image_np_orig
+        image_np_final = image_np_orig
 
-    # rotation degree
-    if len(rotates_confs) > 0:
+        # rotation degree
+        if len(rotates_confs) > 0:
 
-        # find the most possible rotation angle
-        imax = 0
-        for irc, rconf in enumerate(rotates_confs):
-            if rconf > rotates_confs[imax]:
-                imax = irc
+            # find the most possible rotation angle
+            imax = 0
+            for irc, rconf in enumerate(rotates_confs):
+                if rconf > rotates_confs[imax]:
+                    imax = irc
 
-        r = rotates[imax]
+            r = rotates[imax]
 
-        # if we need rotate, do it and infer again
-        if r != 0:
-            print("rotate {:.2f} degree".format(r))
+            # if we need rotate, do it and infer again
+            if r != 0:
+                print("rotate {:.2f} degree".format(r))
 
-            image_np_rotated, mapper = sctool.rotateImage(image_np_raw, r)
+                image_np_rotated, mapper = sctools.transform.rotateImage(image_np_raw, r)
+                image_np_rotated2 = cv2.resize(image_np_rotated, (300, 300))
 
-            output_dict_rotated = infer(image_np_rotated)
-            def mapper_rotate_back(xy):
-                for i in range(xy.shape[1]):
-                    xy[0, i] *= image_np_rotated.shape[1]
-                    xy[1, i] *= image_np_rotated.shape[0]
-                return mapper(xy, src2dst = False)
+                output_dict_rotated = infer(image_np_rotated2)
+                def mapper_rotate_back(xy):
+                    for i in range(xy.shape[1]):
+                        xy[0, i] *= image_np_rotated.shape[1]
+                        xy[1, i] *= image_np_rotated.shape[0]
+                    return mapper(xy, src2dst = False)
 
-            cv2.imshow("image_np_rotated", image_np_rotated)
+                cv2.imshow("image_np_rotated", image_np_rotated2)
 
-            # replace the final result
-            image_np_final = np.copy(image_np_raw)
-            draw_output(image_np_final, output_dict_rotated, classfilter=["c"], mapper = mapper_rotate_back)
+                # replace the final result
+                image_np_final = np.copy(image_np_raw)
+                draw_output(image_np_final, output_dict_rotated, classfilter=["c"], mapper = mapper_rotate_back)
 
-    cv2.imshow("image_np_final", image_np_final)
+        cv2.imshow("image_np_final", image_np_final)
 
-    key = cv2.waitKey(0)
-    if((key & 0xFF)== ord('q') and (key>0)):
-        return False
+        key = cv2.waitKey(0) & 0xFF
+        if(key== ord('q')):
+            return False
+        if(key== ord(' ')):
+            break
+
+        if (key== ord('[')): preRotate -= 1
+        if (key == ord(']')): preRotate += 1
+        preRotate = max(min(preRotate, 90), -90)
+
     return True
 
 
