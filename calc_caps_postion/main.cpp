@@ -11,6 +11,8 @@
 using namespace std;
 using namespace cv;
 
+#define SHOW_MID_RSLT 0
+
 std::vector<std::string> getImgList(std::string inputName)
 {
 	std::vector<std::string> vecFn;
@@ -22,7 +24,7 @@ std::vector<std::string> getImgList(std::string inputName)
 			while (len > 0 && isspace(buf[len - 1]))
 				len--;
 			buf[len] = '\0';
-			cout << buf << endl;
+			//cout << buf << endl;
 			vecFn.push_back(buf);
 		}
 		fclose(f);
@@ -105,9 +107,13 @@ bool is_peak(std::vector<float> wave, int pos) {
 	return isPeak;
 }
 
-int find_beast_pos(std::vector<float> wave, int pos) {
+int find_best_pos(std::vector<float> wave, int pos) {
 	for( int i = pos; i < (int)wave.size() - 1; i++){
 		if(wave[i+1] > wave[i]){
+			return i;
+		}
+
+		if(wave[i] < 6){
 			return i;
 		}
 	}
@@ -121,25 +127,44 @@ int find_match_wave_peak(std::vector<float> left, std::vector<float> right) {
 	int posleft = peakleft - left.begin();
 	int posright = peakright - right.begin();
 
-	if(std::abs(posleft - posright) < 15){
-		return posleft > posright ? find_beast_pos(left, posleft) : find_beast_pos(right, posright);
+#if SHOW_MID_RSLT
+	std::cout << "posleft=" << posleft<< std::endl;
+	std::cout << "posright=" << posright<< std::endl;
+#endif
+
+	if(std::abs(posleft - posright) < 15) {
+		return posleft > posright ? find_best_pos(left, posleft) : find_best_pos(right, posright);
 	}
 	
-	if(*peakleft >= *peakright) {
-		if(is_peak(right, posleft)){
-			return find_beast_pos(left, posleft);
+	if(posleft > posright) {
+		if (right[posright] > 50) {
+			if(is_peak(right, posleft)){
+				return find_best_pos(left, posleft);
+			}
 		}
+		else{
+			return find_best_pos(left, posleft);
+		}
+		
 	}
 	else {
-		if(is_peak(left, posright)){
-			return find_beast_pos(right, posright);
+		if(left[posleft] > 50){
+			if(is_peak(left, posright)){
+				return find_best_pos(right, posright);
+			}	
+		}
+		else {
+			return find_best_pos(right, posright);
 		}
 	}
 
 	return 0;
 }
 
-cv::Rect get_caps(cv::Mat roi) {
+/**
+ * @brief return y position.
+ */
+int get_caps(cv::Mat roi) {
 	cv::Rect rt;
 	cv::Mat gray;
 	cv::cvtColor(roi, gray, cv::COLOR_BGR2GRAY);
@@ -210,6 +235,10 @@ cv::Rect get_caps(cv::Mat roi) {
 
 	int peak = find_match_wave_peak(left2, right2);
 
+	int offvalue = std::min(stride / 3, 18);
+	peak = std::min(peak + offvalue, height - 1);
+
+#if SHOW_MID_RSLT
 	cv::Mat leftshow=cv::Mat::zeros(height, 100, CV_8UC1);
 	cv::Mat rightshow=cv::Mat::zeros(height, 100, CV_8UC1);
 	
@@ -225,8 +254,20 @@ cv::Rect get_caps(cv::Mat roi) {
 	cv::imshow("gray", gray);
 	cv::imshow("edge", edge);
 	cv::waitKey(0);
+#endif
 
-	return rt;
+	return peak;
+}
+
+cv::Rect process(cv::Mat src, cv::Rect rt) {
+	cv::Point offpt;
+	cv::Mat roi = get_roi(src, rt, offpt);
+	int caps_y = get_caps(roi);			
+
+	cv::Rect newRt = rt;
+	newRt.y = caps_y + offpt.y;
+	newRt.height = rt.height - (newRt.y - rt.y);
+	return newRt;
 }
 
 int main(int argc, char** argv) {
@@ -239,23 +280,21 @@ int main(int argc, char** argv) {
 			continue;
 		}
 
-		std::vector<cv::Rect> vecRoi = parse_roi(fn);
-		for(auto rt:vecRoi){
-			cv::Point offpt;
-			cv::Mat roi = get_roi(src, rt, offpt);
-			cv::Rect rtcaps = get_caps(roi);			
+		std::cout << fn << std::endl;
 
-			cv::Rect newRt = rt;
-			newRt.y = rtcaps.y + offpt.y;
-			newRt.height = rt.height - (newRt.y - rt.y);
+		std::vector<cv::Rect> vecRoi = parse_roi(fn);
+		for(auto rt:vecRoi) {
+			
+			cv::Rect newRt = process(src, rt);
+
 			// std::cout << rt.x << ", "<< rt.y << ", "<< rt.width << ", "<< rt.height<< std::endl;
-			cv::rectangle(src, rt, cv::Scalar(0,255,0), 1);
+			cv::rectangle(src, rt, cv::Scalar(0,255,0), 2);
 			cv::rectangle(src, newRt, cv::Scalar(0,0,255), 1);
-		}
-		// cv::Mat roi = get_roi(src, , )
-		
+		}		
 		// cv::imshow("xx", src);
 		// cv::waitKey(0);
+		static int idx = 0;
+		cv::imwrite("./result/" + std::to_string(idx++)+".jpg", src);
 	}
 	
 	return 0;
